@@ -1,69 +1,52 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log"
-	"os"
-	"sync"
+	"net/http"
 	"time"
-
-	"github.com/go-ping/ping"
 )
 
-// pingIP выполняет ping для заданного IP и выводит результат.
-func pingIP(ip string, wg *sync.WaitGroup) {
-	defer wg.Done()
+type DBContainer struct {
+	IP        string    `json:"ip"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+	Datestamp string    `json:"datestamp"`
+}
 
-	pinger, err := ping.NewPinger(ip)
+func createRequest(container DBContainer) (*http.Request, error) {
+	byteSl, err := json.Marshal(container)
 	if err != nil {
-		log.Printf("Ошибка создания пингера для %s: %v\n", ip, err)
-		return
+		log.Println(err)
+		return nil, err
 	}
-
-	// Устанавливаем режим привилегированного пинга (может потребоваться root-права)
-	pinger.SetPrivileged(true)
-	pinger.Count = 3                 // Количество ICMP-запросов
-	pinger.Timeout = 3 * time.Second // Общий таймаут пинга
-	
-	err = pinger.Run()
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/putStatus", bytes.NewBuffer(byteSl))
 	if err != nil {
-		log.Printf("Ошибка при пинге %s: %v\n", ip, err)
-		return
+		log.Println(err)
+		return nil, err
 	}
-	
-	timeStamp := time.Now().Format(time.RFC1123)
-	stats := pinger.Statistics()
-	if stats.PacketsRecv > 0 {
-		fmt.Printf("IP %s доступен (%d/%d пакетов получено)\n", ip, stats.PacketsRecv, stats.PacketsSent)
-		log.Println(timeStamp)
-	} else {
-		fmt.Printf("IP %s недоступен\n", ip)
-		log.Println(timeStamp)
-	}
+	req.Header.Set("Content-type", "application/json")
+	return req, nil
 }
 
 func main() {
-	Ips := []string{}
-	file, err := os.Open("ips.json")
+	container := DBContainer{
+		IP: "0.0.0.0",
+		Status: "OK",
+		Timestamp: time.Now(),
+		Datestamp: time.Now().String(),
+	}
+	req, err := createRequest(container)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
-	data, err := io.ReadAll(file)
+	client := http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
-	err = json.Unmarshal(data, &Ips)
-	if err != nil {
-		log.Fatal(err)
+	if resp.StatusCode == http.StatusOK {
+		log.Println("OK")
 	}
-	var wg sync.WaitGroup
-
-	for _, ip := range Ips {
-		wg.Add(1)
-		go pingIP(ip, &wg)
-	}
-
-	wg.Wait()
 }
